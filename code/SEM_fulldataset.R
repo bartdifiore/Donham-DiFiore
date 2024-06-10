@@ -41,14 +41,14 @@ df <- read.csv("data/PISCO.Raw_ish.forSEM.csv") %>%
 #--------------------------------------------------------------
 
 library(glmmTMB)
-mod3 <- glmmTMB(macpyrad ~ site_status*(scale(mesfraad) + scale(strpurad) + scale(spul)) + (1|site) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1)
+mod3 <- glmmTMB(macpyrad ~ site_status + scale(mesfraad) + scale(strpurad) + scale(spul) + scale(panint) + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~site_status)
 summary(mod3)
 res <- simulateResiduals(mod3)
 plot(res)
 
-plot(ggeffects::ggpredict(mod3, terms = ~strpurad*site_status))
+plot(ggeffects::ggpredict(mod3, terms = ~spul*site_status))
 
-temp <- glmmTMB(macpyrad ~ site_status + (1|site) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1)
+temp <- glmmTMB(macpyrad ~ site_status + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1)
 summary(temp)
 
 pred <- ggeffects::ggpredict(temp, terms = ~site_status)
@@ -82,6 +82,11 @@ ggplot(pred, aes(x = group, y = predicted ))+
 ggsave("figures/mpa_by_trophiclevel.png", device = "png", width = 10, height = 6)
 
 
+
+ggplot(df, aes(y = macpyrad, x = spul))+
+  geom_point(aes(color = site_status))
+
+
 #--------------------------------------------------------------
 ## SEM
 #--------------------------------------------------------------
@@ -109,6 +114,11 @@ ggdag(dag1,
 temp <- glmmTMB(macpyrad ~ spul_legal + mesfraad + strpurad + panint + site_status + (1|site), data = df, family = nbinom2(link = "log"))
 
 summary(temp)
+
+
+
+
+
 
 sem1 <- psem(
 glmmTMB(macpyrad ~ spul_legal + mesfraad + strpurad + panint + site_status + (1|site), data = df, family = nbinom2(link = "log"), ziformula = ~site_status), 
@@ -240,11 +250,11 @@ df.late <- df %>%
 
 
 sem.late <- psem(
-  glmmTMB(macpyrad ~  mesfraad + strpurad + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~.), 
-  glmmTMB(mesfraad ~ spul_legal + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom1(link = "log"), ziformula = ~1),
-  glmmTMB(strpurad ~ panint + spul_legal + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom1(link = "log"), ziformula = ~1), 
-  glmmTMB(spul_legal ~ status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom1(link = "log"), ziformula = ~1),
-  glmmTMB(panint ~ spul_legal + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom1(link = "log"), ziformula = ~1),
+  glmmTMB(macpyrad ~  mesfraad + strpurad + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~status_ordinal), 
+  glmmTMB(mesfraad ~ spul_legal + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1),
+  glmmTMB(strpurad ~ panint + spul_legal + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1), 
+  glmmTMB(spul_legal ~ status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1),
+  glmmTMB(panint ~ spul_legal + status_ordinal + (1|site/transect) + (1|year), data = df, family = nbinom2(link = "log"), ziformula = ~1),
   mesfraad %~~% strpurad
 )
 summary(sem.late, conserve = T)

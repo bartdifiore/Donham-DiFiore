@@ -1,0 +1,708 @@
+---
+title: "Douma and Shipley Multigroup analysis"
+author: "Bart DiFiore"
+date: "2024-06-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, include = F)
+```
+
+
+The goal of this analysis is to determine if the correlations between different trophic guilds differ between protected and protected sites. Specifically, we are modeling the observational data 5-years post MPA implementation. 
+
+Traditional SEM allow for categorical*continuous interactions. However, piecewise SEM's cannot yet accomodate a global interaction (e.g. MPA_status x everything else). Therefore, I am following Douma and Shipley (2021, Ecosphere). They present a reproducible procedure through which to test for global interactions by imposing sequential contrains on a system of linear regressions. 
+
+```{r include = T}
+library(dagitty)
+library(ggdag)
+
+coords <- list(
+  x = c(Kelp = 0, Purple_urchin = -1, Red_urchin = 1, Sheephead = -1, Status = 0, Lobster = 1),
+  y = c(Kelp = 0, Purple_urchin = 2, Red_urchin = 2, Sheephead = 3, Status = 4, Lobster = 3)
+)
+
+dag1 <- dagify(Kelp ~ Status + Purple_urchin + Red_urchin + Lobster + Sheephead, 
+               Red_urchin ~ Sheephead + Lobster + Status,
+               Purple_urchin ~ Sheephead + Lobster + Status,
+               Sheephead ~ Status,
+               Lobster ~ Status,
+               Red_urchin ~~ Purple_urchin, 
+               coords = coords)
+
+ggdag(dag1, 
+      text_col = "grey50")+
+  theme_dag_blank()
+
+```
+Specifically, we are interested in understanding not simply if (for example) purple urchin abundance is lower in MPAs, but if the relationship of purple urchins on kelp differs with MPA status. 
+
+```{r}
+library(tidyverse)
+
+df <- read.csv("data/PISCO_LTER_KFM_lnRR.csv") %>%
+  janitor::clean_names() %>%
+  as_tibble()
+
+df1 <- df %>% 
+  filter(y %in% c("Panulirus interruptus", "Mesocentrotus franciscanus", "Strongylocentrotus purpuratus", "Macrocystis pyrifera", "Semicossyphus pulcher"), resp == "Den" ) %>%
+  select(ca_mpa_name_short, year, y, mpa, reference, time, source) %>%
+  pivot_longer(cols = c(mpa, reference), names_to = "status", values_to = "density") %>%
+  pivot_wider(names_from = y, values_from = density) %>%
+  rename(site = ca_mpa_name_short, lob = "Panulirus interruptus", red = "Mesocentrotus franciscanus", purple = "Strongylocentrotus purpuratus", kelp = "Macrocystis pyrifera", sheephead = "Semicossyphus pulcher") %>%
+  drop_na() %>% 
+  filter(time >= 5) %>%
+  mutate(status = as.factor(status))
+
+```
+
+It is important to note, that for the SEM's we need each individual linear model to be modeling the same subset of the data. Therefore, we have to **a priori** limit the data set to only observations that are present across all predictors, responses, and grouping variables. In other words, I had to drop all rows in the data set with NA. This caused certain survey's to be entirely excluded, like the LTER lobster surveys as those surveys do not also include data on purple urchin, sheephead, etc.  
+
+The key aspect of this analysis is that we are testing **specific** DAGs that represent hypothesized causal topologies. And we can only test the hypothesized causal topologies against a more-saturated model. In other words the hypothesized model must be nested within a more saturated model. Shipley and Douma ([2020](https://esajournals.onlinelibrary.wiley.com/action/downloadSupplement?doi=10.1002%2Fecy.2960&file=ecy2960-sup-0001-AppendixS1.pdf)) provide an excellent overview for how to develop saturated models with free parameters against which to test hypothesized DAGs. 
+
+Here I will start by writing out the fixed effects model structures for our hypothesized DAGs: 
+
+DAG 1: This hypothesized causal topology predicts that all endogenous variables can express a different intercept based on MPA status. It also predicts that there will be differences in the path coefficients based on status for all higher trophic levels on kelp, and lobster / sheephead impacts on urchin. 
+
+$$ \begin{align}
+
+kelp &\sim \beta_0 + \beta_1Status + \beta_2Purple + \beta_3PurpleStatus + \beta_4Red + \beta_5RedStatus+\beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+purple &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+red &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+lob &\sim \beta_0 + \beta_1Status\\
+
+sheep &\sim \beta_0 + \beta_1Status\\
+
+\end{align}$$
+
+DAG 2: An alternative hypothesis could be that only the intercepts vary by status and the coefficients for differences in path coefficients are fixed (at zero). However in this DAG we still assume the same directed paths between endogenous variables. 
+
+$$ \begin{align}
+
+kelp &\sim \beta_0 + \beta_1Status + \beta_2Purple + 0PurpleStatus + \beta_4Red + 0RedStatus+\beta_6Lob+0LobStatus + \beta_8Sheep+0SheepStatus \\
+
+purple &\sim \beta_0 + \beta_1Status + \beta_6Lob+0LobStatus + \beta_8Sheep+0SheepStatus \\
+
+red &\sim \beta_0 + \beta_1Status + \beta_6Lob+0LobStatus + \beta_8Sheep+0SheepStatus \\
+
+lob &\sim \beta_0 + \beta_1Status\\
+
+sheep &\sim \beta_0 + \beta_1Status\\
+
+\end{align}$$
+In this sense it's easy to see that DAG 2 is nested withing DAG 1. Thus we can use the Shipley and Douma chi-square test to evaluate model fit. 
+
+DAG 3: We might also believe that there is not direct effect of predators on kelp. Rather the effects of predators are conditional on kelp via their effects on urchins. Here we can change the DAG to reflect that hypothesis. 
+
+$$ \begin{align}
+
+kelp &\sim \beta_0 + \beta_1Status + \beta_2Purple + \beta_3PurpleStatus + \beta_4Red + \beta_5RedStatus+0Lob+0LobStatus + 0Sheep+0SheepStatus \\
+
+purple &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+red &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+lob &\sim \beta_0 + \beta_1Status\\
+
+sheep &\sim \beta_0 + \beta_1Status\\
+
+\end{align}$$
+
+Again, here I've used zeros to FIX the parameters so that we can see that this DAG is nested within DAG 1. 
+
+
+You could imagine that there are many different causal topologies that we could test that are nested within DAG 1. We can and should explore more of these causal hypothesis. However, for times sake I'll only test a few that I think are most relevant. 
+
+DAG 4: We could also create simplier DAG's where the effects of predators/consumers are more specific. For instance, here we assume that the effect of purple urchins on kelp differs by status. And that that effect is due to differences in lobster impacts on purple urchins by status. 
+
+$$ \begin{align}
+
+kelp &\sim \beta_0 + \beta_1Status + \beta_2Purple + \beta_3PurpleStatus + \beta_4Red + 0RedStatus+0Lob+0LobStatus + 0Sheep+0SheepStatus \\
+
+purple &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+0SheepStatus \\
+
+red &\sim \beta_0 + \beta_1Status + \beta_6Lob+0LobStatus + \beta_8Sheep+0SheepStatus \\
+
+lob &\sim \beta_0 + \beta_1Status\\
+
+sheep &\sim \beta_0 + \beta_1Status\\
+
+\end{align}$$
+
+Dag 5: Another potentially interesting DAG is depicted below
+
+```{r include = T}
+library(dagitty)
+library(ggdag)
+
+coords <- list(
+  x = c(Kelp = 0, Purple_urchin = -1, Red_urchin = 1, Sheephead = -1, Status = 0, Lobster = 1),
+  y = c(Kelp = 0, Purple_urchin = 2, Red_urchin = 2, Sheephead = 3, Status = 4, Lobster = 3)
+)
+
+dag1 <- dagify(Kelp ~ Purple_urchin + Red_urchin, 
+               Red_urchin ~ Sheephead + Status,
+               Purple_urchin ~ Sheephead + Lobster,
+               Sheephead ~ Status,
+               Lobster ~ Status,
+               # Red_urchin ~~ Purple_urchin, 
+               coords = coords)
+
+ggdag(dag1, 
+      text_col = "grey50")+
+  theme_dag_blank()
+
+```
+
+You can see in this DAG that protection status only has direct causal links with sheephead, lobster, and red urchin. Each of these species is commercially and recreationally harvested. Thus, we would predict that MPAs would increase the abundance (e.g. the intercept) of each of these guilds. Increases in the abundance (intercept) of predators could result in changes in the relationship between the predators and the urchin guilds. Thus I this DAG should also allow for differences in the path coefficients by MPA status between predators and prey.  
+
+$$ \begin{align}
+
+kelp &\sim 0+ 0Status + \beta_2Purple + 0PurpleStatus + \beta_3Red + 0RedStatus+0Lob+0LobStatus + 0Sheep+0SheepStatus \\
+
+purple &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+red &\sim \beta_0 + \beta_1Status + \beta_6Lob+\beta_7LobStatus + \beta_8Sheep+\beta_9SheepStatus \\
+
+lob &\sim \beta_0 + \beta_1Status\\
+
+sheep &\sim \beta_0 + \beta_1Status\\
+
+\end{align}$$
+
+DAG 6: Finally, as somewhat of a "null" model, we can test the hypothesis that all trophic levels are cuasally unrelated. And the only driver is MPA status. 
+
+$$ \begin{align}
+
+kelp &\sim \beta_0 + \beta_1Status + 0Purple + 0PurpleStatus + 0Red + 0RedStatus+0Lob+0LobStatus + 0Sheep+0SheepStatus \\
+
+purple &\sim \beta_0 + \beta_1Status + 0Lob+0LobStatus + 0Sheep+0SheepStatus \\
+
+red &\sim \beta_0 + \beta_1Status + 0Lob+0LobStatus + 0Sheep+0SheepStatus \\
+
+lob &\sim \beta_0 + \beta_1Status\\
+
+sheep &\sim \beta_0 + \beta_1Status\\
+
+\end{align}$$
+
+We should note that each model is nested within DAG 1. Subsequent models *are NOT* (I don't think???) however necessarily nested within the previous model. For instance, DAG 3 is not nested within DAG 2 *BUT* DAG 5 is nested within DAG 3. 
+
+```{r}
+
+#R function to calculate the AIC, loglikelihood and chi-
+#square statistics.
+MLX2<-function(submodels,saturated.submodels,data){
+  #submodels is a list containing the submodels in your model
+  # in the form of linear, generalized linear, generalized additive
+  # mixed models, or any other model object that has AIC and
+  #log-likelihood attributes.
+  #saturated.submodels is a list containing the submodels of your
+  # model that defines the saturated submodels (or otherwise)
+  #into which your model is properly nested.
+  #data is the data set
+  #
+  #number of submodels in full model
+  nobs<-dim(data)[1]
+  nsub<-length(submodels)
+  error.mes1<-error.mes2<-rep(FALSE,nsub)
+  #if there is an error in estimating a model, then error.mes==TRUE
+  #and don't calculate statistics
+  # for(i in 1:nsub){
+  #   #check if the submodels and the saturated submodels are
+  #   #of the same class, and stop if not.
+  #   stopifnot(class(submodels[[i]])==
+  #               class(saturated.submodels[[i]]))
+  #   if(all(class(submodels[[i]])=="lm")){
+  #     error.mes1[i]<-error.mes2[i]<-FALSE
+  #   }
+  #   else{
+  #     error.mes1[i]<-!submodels[[i]]$converged & submodels[[i]]$boundary
+  #     error.mes2[i]<-!saturated.submodels[[i]]$converged & saturated.submodels[[i]]$boundary
+  #   }}
+  out<-data.frame(submodel=1:nsub,logLikelihoods=rep(NA,nsub),
+                  k=rep(NA,nsub),AICs=rep(NA,nsub),n.free.parameters=
+                    rep(NA,nsub))
+  out.saturated<-data.frame(submodel=1:nsub,logLikelihoods=rep(NA,nsub),
+                            k=rep(NA,nsub),AICs=rep(NA,nsub),
+                            n.free.parameters=rep(NA,nsub))
+  
+  #get likelihoods, AIC & k and store in "out"
+  for(i in 1:nsub){
+    out$logLikelihoods[i]<-logLik(submodels[[i]])
+    out$AICs[i]<-AIC(submodels[[i]])
+    out$k[i]<-nobs-df.residual(submodels[[i]])
+    out$n.free.parameters[i]<-attributes(logLik(submodels[[i]]))$df
+    out.saturated$n.free.parameters[i]<-attributes(logLik(saturated.submodels[[i]]))$df
+        out.saturated$logLikelihoods[i]<-logLik(saturated.submodels[[i]])
+    out.saturated$AICs[i]<-AIC(saturated.submodels[[i]])
+    out.saturated$k[i]<-nobs-df.residual(saturated.submodels[[i]])
+  }
+  #Overall k, AIC and likelihood for models:
+  model.AIC<-sum(out$AIC)
+  model.LL<-sum(out$logLikelihoods)
+#model df is the difference in the # of free parameters in the
+#less constrained model relative to the # of free parameters in the
+# more constrained (nested) model
+  model.df<-sum(out.saturated$n.free.parameters)-
+    sum(out$n.free.parameters)
+  n.free.parameters<-sum(out$n.free.parameters)
+  n.saturated.free.parameters<-sum(out.saturated$n.free.parameters)
+  saturated.model.AIC<-sum(out.saturated$AIC)
+  saturated.model.LL<-sum(out.saturated$logLikelihoods)
+  saturated.model.df<-sum(out.saturated$k)
+# the MLX2 statistic is the difference in likelihoods between the
+#more constrained (nested) model and the less constrained model;
+#usually the saturated model
+  X2<--2*(model.LL-saturated.model.LL)
+  if(X2<0)X2<-NA
+#  df<-saturated.model.df-model.df
+  null.prob<-NA
+#Only calculate null prob if the X2 is valid with valid df
+  if(!is.na(X2)&(model.df>0))null.prob<-1-pchisq(X2,model.df)
+  #check if any models had errors in estimation
+  error.flag<-sum(error.mes1)+sum(error.mes2)
+  list(model.X2=X2,model.df=model.df,null.prob=null.prob,
+       model.loglikelihood=model.LL,
+       n.free.parameters=n.free.parameters,
+       n.free.parameters.saturated=n.saturated.free.parameters,
+       saturated.model.loglikelihood=saturated.model.LL,
+       model.AIC=model.AIC,error.flag=error.flag)
+}
+
+
+```
+
+
+```{r DAGS}
+
+# DAG S - Saturated
+
+# Model Saturated
+dagS.1 <- lmer(kelp ~ status*(purple + red + lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dagS.2 <- lmer(red ~ status*(lob + sheephead) + (1|site) + (1|year), data = df1, REML = F)
+
+dagS.3 <- lmer(purple ~ status*(lob + sheephead + red) + (1|site) + (1|source), data = df1, REML = F)
+dagS.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dagS.5 <- lmer(lob ~ status*sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dagS <- list(dagS.1, dagS.2, dagS.3, dagS.4, dagS.5)
+
+
+```
+
+
+```{r DAG1}
+library(lme4)
+library(lmerTest)
+
+# DAG 1
+
+# Model 1: path coefficients vary between mpa and fished
+dag1.1 <- lmer(kelp ~ status*(purple + red + lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag1.2 <- lmer(red ~ status*(lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag1.3 <- lmer(purple ~ status*(lob + sheephead) + (1|site) + (1|source), data = df1, REML = F)
+dag1.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag1.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag1 <- list(dag1.1, dag1.2, dag1.3, dag1.4, dag1.5)
+
+
+```
+
+```{r DAG2}
+# DAG 2
+
+dag2.1 <- lmer(kelp ~ status + purple + red + lob + sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag2.2 <- lmer(red ~ status + lob + sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag2.3 <- lmer(purple ~ status + lob + sheephead + (1|site) + (1|source), data = df1, REML = F)
+dag2.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag2.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag2 <- list(dag2.1, dag2.2, dag2.3, dag2.4, dag2.5)
+
+```
+
+```{r DAG3}
+
+# DAG 3 
+dag3.1 <- lmer(kelp ~ status*(purple + red) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag3.2 <- lmer(red ~ status*(lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag3.3 <- lmer(purple ~ status*(lob + sheephead) + (1|site) + (1|source), data = df1, REML = F)
+dag3.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag3.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag3 <- list(dag3.1, dag3.2, dag3.3, dag3.4, dag3.5)
+
+
+
+```
+
+```{r DAG4}
+
+# DAG 4
+
+# Model 1: path coefficients vary between mpa and fished
+dag4.1 <- lmer(kelp ~ status*purple + red + lob + sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag4.2 <- lmer(red ~ status + lob + sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag4.3 <- lmer(purple ~ status*(lob + sheephead) + (1|site) + (1|source), data = df1, REML = F)
+dag4.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag4.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag4 <- list(dag4.1, dag4.2, dag4.3, dag4.4, dag4.5)
+
+
+```
+
+
+```{r DAG5}
+
+# DAG 5 
+dag5.1 <- lmer(kelp ~ purple + red + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag5.2 <- lmer(red ~ status*(lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag5.3 <- lmer(purple ~ status*(lob + sheephead) + (1|site) + (1|source), data = df1, REML = F)
+dag5.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag5.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag5 <- list(dag5.1, dag5.2, dag5.3, dag5.4, dag5.5)
+
+
+
+```
+
+```{r DAG6}
+
+# DAG 6 
+dag6.1 <- lmer(kelp ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag6.2 <- lmer(red ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag6.3 <- lmer(purple ~ status + (1|site) + (1|source), data = df1, REML = F)
+dag6.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag6.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag6 <- list(dag6.1, dag6.2, dag6.3, dag6.4, dag6.5)
+
+
+
+```
+
+```{r DAG7}
+
+# DAG 7
+
+dag7.1 <- lmer(kelp ~ purple + red + lob + sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag7.2 <- lmer(red ~ lob + sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag7.3 <- lmer(purple ~ lob + sheephead + (1|site) + (1|source), data = df1, REML = F)
+dag7.4 <- lmer(sheephead ~ 1 + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+dag7.5 <- lmer(lob ~ 1 + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+dag7 <- list(dag7.1, dag7.2, dag7.3, dag7.4, dag7.5)
+
+
+```
+
+
+```{r include = T}
+# Build out the table components
+
+dag1_dagS <- MLX2(submodels = dag1, saturated.submodels = dagS, data = df1)
+dag2_dagS <- MLX2(submodels = dag2, saturated.submodels = dag1, data = df1)
+dag3_dagS <- MLX2(submodels = dag3, saturated.submodels = dag1, data = df1)
+dag4_dagS <- MLX2(submodels = dag4, saturated.submodels = dag1, data = df1)
+dag5_dagS <- MLX2(submodels = dag5, saturated.submodels = dag1, data = df1)
+dag6_dagS <- MLX2(submodels = dag6, saturated.submodels = dag1, data = df1)
+dag7_dagS <- MLX2(submodels = dag7, saturated.submodels = dag1, data = df1)
+
+dag1.aic <- AIC(dag1.1) + AIC(dag1.2) + AIC(dag1.3) + AIC(dag1.4) + AIC(dag1.5)
+
+table_df <- data.frame(model = c(1,2,3,4,5,6), 
+                       model_description = c("Path coefficients vary", 
+                                             "Path coefficients are fixed", 
+                                             "Modification 3", 
+                                             "Modification 4", 
+                                             "Modification 5", 
+                                             "Only status has causal impact"), 
+                       X2_value = c(NA, 
+                                    dag2_dag1$model.X2, 
+                                    dag3_dag1$model.X2, 
+                                    dag4_dag1$model.X2, 
+                                    dag5_dag1$model.X2, 
+                                    dag6_dag1$model.X2), 
+                       null_prob = c(NA, 
+                                    dag2_dag1$null.prob, 
+                                    dag3_dag1$null.prob, 
+                                    dag4_dag1$null.prob, 
+                                    dag5_dag1$null.prob, 
+                                    dag6_dag1$null.prob), 
+                       modelAIC = c(dag1.aic, 
+                                    dag2_dag1$model.AIC, 
+                                    dag3_dag1$model.AIC, 
+                                    dag4_dag1$model.AIC, 
+                                    dag5_dag1$model.AIC, 
+                                    dag6_dag1$model.AIC))
+
+
+knitr::kable(table_df, 
+             format = "html",
+             digits = 2, 
+             col.names = c("Model", "Model description", "Chi-square value", "p-value", "AIC"),
+             caption = "Table summarizing key statistics associated with each model. Each model represents a DAG that includes 6 mixed-effects models depicting the different hypothesized paths. Models 2:6 are nested within Model 1. Therefore each is statistically compared to model 1 using the chi-square statistic. P-values are different than in traditional regression modeling. A p-value > 0.05 would suggest that a nested model is a better representation of the data than the more saturated model. Therefore, here we find that we cannot assume that the saturated model is not a better representation of the data. In other words the saturated model with varying path coefficients is the selected model.")
+
+
+
+```
+```{r}
+
+df_sem <- df1 %>%
+  mutate(status_ordinal = as.integer(ifelse(status == "mpa", 1, 0)))
+
+library(piecewiseSEM)
+sem1 <- psem(
+  lmer(kelp ~ status_ordinal*(purple + red + lob + sheephead) + (1|site) + (1|year) + (1|source), data = df_sem),
+  lmer(red ~ status_ordinal*(lob + sheephead) + (1|site) + (1|year) + (1|source), data = df_sem), 
+  lmer(purple ~ status_ordinal*(lob + sheephead) + (1|site) + (1|source), data = df_sem),
+  lmer(sheephead ~ status_ordinal + (1|site) + (1|year) + (1|source), data = df_sem), 
+  lmer(lob ~ status_ordinal + (1|site) + (1|year) + (1|source), data = df_sem), 
+  red %~~% purple)
+
+summary(sem1)
+
+
+sem2 <- psem(
+  lmer(kelp ~ status_ordinal + purple + red + lob + sheephead + (1|site) + (1|year) + (1|source), data = df_sem),
+  lmer(red ~ status_ordinal + lob + sheephead + (1|site) + (1|year) + (1|source), data = df_sem), 
+  lmer(purple ~ status_ordinal + lob + sheephead + (1|site) + (1|source), data = df_sem),
+  lmer(sheephead ~ status_ordinal + (1|site) + (1|year) + (1|source), data = df_sem), 
+  lmer(lob ~ status_ordinal + (1|site) + (1|year) + (1|source), data = df_sem), 
+  red %~~% purple)
+
+summary(sem2)
+
+
+sem3 <- psem(
+  lmer(kelp ~ status_ordinal*(purple + red + lob) + (1|site) + (1|year) + (1|source), data = df_sem),
+  lmer(red ~ status_ordinal*(lob + sheephead) + (1|site) + (1|year) + (1|source), data = df_sem), 
+  lmer(purple ~ status_ordinal*(lob + sheephead) + (1|site) + (1|source), data = df_sem),
+  lmer(sheephead ~ status_ordinal + (1|site) + (1|year) + (1|source), data = df_sem), 
+  lmer(lob ~ status_ordinal + (1|site) + (1|year) + (1|source), data = df_sem), 
+  red %~~% purple)
+
+summary(sem3)
+
+AIC(sem1)
+AIC(sem2)
+AIC(sem3)
+```
+
+
+
+
+
+
+
+```{r}
+df2 <- df %>% 
+  filter(y %in% c("Panulirus interruptus", "Mesocentrotus franciscanus", "Strongylocentrotus purpuratus", "Macrocystis pyrifera", "Semicossyphus pulcher"), resp == "Den" ) %>%
+  select(ca_mpa_name_short, year, y, mpa, reference, time, source) %>%
+  pivot_longer(cols = c(mpa, reference), names_to = "status", values_to = "density") %>%
+  mutate(density = ifelse(density == 1, 0.9999, density)) %>% # This correction is needed to fit with a zero inflated beta distribution...
+  pivot_wider(names_from = y, values_from = density) %>%
+  rename(site = ca_mpa_name_short, lob = "Panulirus interruptus", red = "Mesocentrotus franciscanus", purple = "Strongylocentrotus purpuratus", kelp = "Macrocystis pyrifera", sheephead = "Semicossyphus pulcher") %>%
+  drop_na() %>% 
+  filter(time >= 5) %>%
+  mutate(status = as.factor(status))
+
+library(glmmTMB)
+library(ggeffects)
+library(DHARMa)
+
+# Saturated model
+    beta1.s <- glmmTMB(kelp ~ status*(purple + red + lob) + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit")) 
+    summary(beta1.s)
+    plot(simulateResiduals(beta1.s))
+    plot(ggpredict(beta1.s, terms = ~purple*status))
+    beta2.s <- glmmTMB(red ~ status*(lob + sheephead + purple) + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta3.s <- glmmTMB(purple ~ status*(lob + sheephead) + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit")) 
+    
+    beta4.s <- glmmTMB(sheephead ~ status + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta5.s <- glmmTMB(lob ~ status + sheephead + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta.s <- list(beta1.s, beta2.s, beta3.s, beta4.s, beta5.s)
+
+# Nested model 1
+    beta1.1 <- glmmTMB(kelp ~ status + purple + red + lob + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit")) 
+    
+    beta2.1 <- glmmTMB(red ~ status + lob + sheephead + purple + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta3.1 <- glmmTMB(purple ~ status + lob + sheephead + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit")) 
+    
+    beta4.1 <- glmmTMB(sheephead ~ status + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta5.1 <- glmmTMB(lob ~ status + sheephead + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta.1 <- list(beta1.1, beta2.1, beta3.1, beta4.1, beta5.1)
+
+beta1_betaS <- MLX2(submodels = beta.1, saturated.submodels = beta.s, data = df2)
+
+
+# Nested model 2
+    beta1.2 <- glmmTMB(kelp ~ status*purple + red + lob + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit")) 
+    
+    beta2.2 <- glmmTMB(red ~ status + lob + sheephead + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta3.2 <- glmmTMB(purple ~ status*lob + sheephead + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit")) 
+    
+    beta4.2 <- glmmTMB(sheephead ~ status + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta5.2 <- glmmTMB(lob ~ status + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
+    
+    beta.2 <- list(beta1.2, beta2.2, beta3.2, beta4.2, beta5.2)
+    beta1_betaS <- MLX2(submodels = beta.2, saturated.submodels = beta.s, data = df2)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+
+# Likelihood ratio test 
+library(lmerTest)
+library(DHARMa)
+
+
+# Trouble shoot the boundary effects for purple urchins before modeling: 
+
+      tshoot <- lmer(red ~ 1 + (1|site) + (1|year) + (1|source), data = df1)
+      ranef(tshoot)
+      
+      tshoot.noyear <- lmer(purple ~ 1 + (1|site) + (1|source), data = df1)
+      ranef(tshoot)
+      
+      tshoot2 <- lmer(purple ~ status/lob + status/sheephead + (1|site) + (1|year) + (1|source), data = df1)
+      ranef(tshoot)
+      
+      # For some reason (which I cannot determine), the random effect of year is consistently being estimated at zero in the model with purple urchins as a response. 
+
+# Specify the saturated model
+se.1.sat <- lmer(kelp ~ status/purple + status/red + status/lob + status/sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.2.sat <- lmer(red ~ status/lob + status/sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.3.sat <- lmer(purple ~ status/lob + status/sheephead + (1|site) + (1|source), data = df1, REML = F)
+se.4.sat <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.5.sat <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+logLik.sat <- logLik(se.1.sat) + logLik(se.2.sat) + logLik(se.3.sat) + logLik(se.4.sat) + logLik(se.5.sat)
+
+
+# Model 1: path coefficients vary between mpa and fished
+se.1.d <- lmer(kelp ~ status/purple + status/red + status/lob + status/sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+    summary(se.1.d)
+    # res <- simulateResiduals(se.1.d)
+    # plot(res)
+se.2.d <- lmer(red ~ status/lob + status/sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.3.d <- lmer(purple ~ status/lob + status/sheephead + (1|site) + (1|source), data = df1, REML = F)
+summary(se.3.d)
+se.4.d <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.5.d <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+logLik.d <- logLik(se.1.d) + logLik(se.2.d) + logLik(se.3.d) + logLik(se.4.d) + logLik(se.5.d)
+
+
+# Model 2: intercepts vary but path coefficients do not vary between mpa and fished
+se.1 <- lmer(kelp ~ status + purple + red + lob + sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.2 <- lmer(red ~ status + lob + sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.3 <- lmer(purple ~ status + lob + sheephead + (1|site) + (1|source), data = df1, REML = F)
+summary(se.3)
+se.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+logLik.h <- logLik(se.1) + logLik(se.2) + logLik(se.3) + logLik(se.4) + logLik(se.5)
+
+
+# Model 3: intercepts vary but path coefficients only vary for pred effects on purple
+se.1.3 <- lmer(kelp ~ status/purple + red + lob + sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.2.3 <- lmer(red ~ status + lob + sheephead  + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.3.3 <- lmer(purple ~ status/lob + status/sheephead + (1|site) + (1|source), data = df1, REML = F)
+summary(se.3.3)
+se.4.3 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+se.5.3 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+
+logLik.3 <- logLik(se.1.3) + logLik(se.2.3) + logLik(se.3.3) + logLik(se.4.3) + logLik(se.5.3)
+
+
+# comparison of likelihoods
+
+# df
+df.h <- extractAIC(se.1)[1] +extractAIC(se.2)[1] + extractAIC(se.3)[1] + extractAIC(se.4)[1] + extractAIC(se.5)[1]
+df.d <- extractAIC(se.1.d)[1] +extractAIC(se.2.d)[1] + extractAIC(se.3.d)[1] + extractAIC(se.4.d)[1] + extractAIC(se.5.d)[1]
+df.sat <- extractAIC(se.1.sat)[1] + extractAIC(se.2.sat)[1] + extractAIC(se.3.sat)[1] + extractAIC(se.4.sat)[1] + extractAIC(se.5.sat)[1]
+df.3 <- extractAIC(se.1.3)[1] + extractAIC(se.2.3)[1] + extractAIC(se.3.3)[1] + extractAIC(se.4.3)[1] + extractAIC(se.5.3)[1]
+
+# chi square test
+Chi.diff.h <- -2*(logLik.h - logLik.sat)
+Chi.diff.d <- -2*(logLik.d - logLik.sat)
+Chi.diff.3 <- -2*(logLik.3 - logLik.sat)
+
+pchisq(114, 50)
+# p value 
+1-pchisq(Chi.diff.h,(df.sat-df.h))
+1-pchisq(Chi.diff.d,(df.sat-df.d))
+1-pchisq(Chi.diff.3, (df.sat-df.3))
+
+AIC.h <- extractAIC(se.1)[2] +extractAIC(se.2)[2] + extractAIC(se.3)[2] + extractAIC(se.4)[2] + extractAIC(se.5)[2]
+
+AIC.d <- extractAIC(se.1.d)[2] +extractAIC(se.2.d)[2] + extractAIC(se.3.d)[2] + extractAIC(se.4.d)[2] + extractAIC(se.5.d)[2]
+
+AIC.sat <- extractAIC(se.1.sat)[2] + extractAIC(se.2.sat)[2] + extractAIC(se.3.sat)[2] + extractAIC(se.4.sat)[2] + extractAIC(se.5.sat)[2]
+
+AIC.3 <- extractAIC(se.1.3)[2] + extractAIC(se.2.3)[2] + extractAIC(se.3.3)[2] + extractAIC(se.4.3)[2] + extractAIC(se.5.3)[2]
+
+model.AIC <- AIC(se.1.3)+AIC(se.2.3)+AIC(se.3.3)+AIC(se.4.3)+AIC(se.5.3)
+c(AIC.h, AIC.d, AIC.sat, AIC.3)
+```
+
+```{r}
+# Compare manual calculations to estimates of statistics from Douma and Shipley 2020. 
+
+saturated <- list(se.1.sat, se.2.sat, se.3.sat, se.4.sat, se.5.sat)
+mod3 <- list(se.1.3, se.2.3, se.3.3, se.4.3, se.5.3)
+
+MLX2(submodels = mod3, saturated.submodels = saturated, data = df1)
+
+# str(mod1[[1]])
+# mod1[[1]]
+
+
+```
+
+
+
+
+
+
+
+
