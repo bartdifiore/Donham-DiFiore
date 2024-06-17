@@ -464,15 +464,21 @@ Also I've been back and forth w/ Bob Douma on the interpretation of the p-values
 
 ```{r}
 # dag1 <- list(dag1.1, dag1.2, dag1.3, dag1.4, dag1.5)
-# summary(dag1.1)
-# summary(dag1.2)
-# summary(dag1.3)
-# summary(dag1.4)
-# summary(dag1.5)
-# summary(dag1.6)
+summary(dag1.1)
+summary(dag1.2)
+summary(dag1.3)
+summary(dag1.4)
+summary(dag1.5)
+summary(dag1.6)
 # 
-# dag1.1 <- lmer(kelp ~ status*(purple + red + lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
-# summary(dag1.1)
+dag1.1 <- lmer(kelp ~ status*(purple + red + lob + sheephead) + (1|site) + (1|year) + (1|source), data = df1, REML = F)
+summary(dag1.1)
+library(ggeffects)
+
+plot(ggpredict(dag1.1, terms = ~purple*status), add.data = T )
+
+
+
 # 
 # dag1.1 <- lmer(kelp ~ status/purple + status/red + status/lob + status/sheephead + (1|site) + (1|year) + (1|source), data = df1, REML = F)
 # summary(dag1.1)
@@ -489,8 +495,8 @@ Also I've been back and forth w/ Bob Douma on the interpretation of the p-values
 # dag1.4 <- lmer(sheephead ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
 # summary(dag1.4)
 # 
-# dag1.5 <- lmer(lob ~ status + (1|site) + (1|year) + (1|source), data = df1, REML = F)
-# summary(dag1.5)
+dag1.5 <- lmer(lob ~ status + (1|year), data = df1, REML = F)
+summary(dag1.5)
 # 
 # 
 
@@ -524,6 +530,11 @@ sem1 <- psem(
   red %~~% purple)
 
 summary(sem1)
+
+
+ggplot(df1, aes(x = status, y = sheephead))+
+  geom_point()+
+  
 
 ```
 
@@ -565,9 +576,11 @@ library(DHARMa)
     
     beta4.s <- glmmTMB(sheephead ~ status + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
     summary(beta4.s)
+     plot(ggpredict(beta4.s, terms = ~status))
     
     beta5.s <- glmmTMB(lob ~ status + (1|site) + (1|year) + (1|source), ziformula = ~1, data = df2, family = beta_family(link = "logit"))
     summary(beta5.s)
+    plot(ggpredict(beta5.s, terms = ~status))
     
     beta.s <- list(beta1.s, beta2.s, beta3.s, beta4.s, beta5.s)
 
@@ -606,6 +619,26 @@ beta1_betaS <- MLX2(submodels = beta.1, saturated.submodels = beta.s, data = df2
 
 
 
+```{r}
+df <- read.csv("data/PISCO_LTER_KFM_lnRR.csv") %>%
+  janitor::clean_names() %>%
+  as_tibble()
+
+df3 <- df %>% 
+  filter(y %in% c("Panulirus interruptus", "Mesocentrotus franciscanus", "Strongylocentrotus purpuratus", "Macrocystis pyrifera", "Semicossyphus pulcher"), resp == "Den" ) %>%
+  select(ca_mpa_name_short, year, y, mpa, reference, time, source) %>%
+  pivot_longer(cols = c(mpa, reference), names_to = "status", values_to = "density") %>%
+  pivot_wider(names_from = y, values_from = density) %>%
+  rename(site = ca_mpa_name_short, lob = "Panulirus interruptus", red = "Mesocentrotus franciscanus", purple = "Strongylocentrotus purpuratus", kelp = "Macrocystis pyrifera", sheephead = "Semicossyphus pulcher") %>%
+  # drop_na() %>% 
+  filter(time >= 5 & time <= 11) %>%
+  mutate(status = as.factor(status))
+
+dag1.5 <- lmer(sheephead ~ status + (1|year), data = df3)
+summary(dag1.5)
+
+
+```
 
 
 
